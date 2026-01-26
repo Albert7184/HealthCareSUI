@@ -1,0 +1,17 @@
+# Bỏ qua rác hệ thống
+node_modules/
+.next/
+out/
+build/
+dist/
+.DS_Store
+
+# Bỏ qua môi trường ảo Python
+venv/
+__pycache__/
+*.pyc
+
+# Bỏ qua ảnh và file tạm
+*.jpg
+*.png
+.env
