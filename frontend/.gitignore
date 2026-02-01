@@ -1,17 +1,22 @@
-# Bỏ qua rác hệ thống
+# Bỏ qua node_modules (Rất nặng)
 node_modules/
 .next/
 out/
-build/
-dist/
-.DS_Store
 
-# Bỏ qua môi trường ảo Python
-venv/
+# Bỏ qua file Python cache
 __pycache__/
 *.pyc
 
-# Bỏ qua ảnh và file tạm
+# Bỏ qua file dữ liệu tạm thời
 *.jpg
 *.png
+user_info.json
+food_name.txt
+ai_result.json
+
+# Bỏ qua file môi trường (Chứa key bí mật)
 .env
+.env.local
+.venv
+
+

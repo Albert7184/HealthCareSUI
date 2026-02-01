@@ -5,10 +5,11 @@ import { getFullnodeUrl } from "@mysten/sui/client";
 import { Transaction } from "@mysten/sui/transactions";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "@mysten/dapp-kit/dist/index.css";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+// --- CẤU HÌNH ---
 const { networkConfig } = createNetworkConfig({
   testnet: { url: getFullnodeUrl("testnet") },
 });
@@ -38,74 +39,149 @@ function MainInterface() {
   const [aiResult, setAiResult] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   
+  // State cho File ảnh
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [height, setHeight] = useState("");
-  const [weight, setWeight] = useState("");
-  const [goal, setGoal] = useState("giam_can"); 
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  
+  // State cho Tên món ăn
+  const [foodName, setFoodName] = useState("");
 
-  const uploadFileToServer = async (fileToUpload: File) => {
-    const formData = new FormData();
-    formData.append("file", fileToUpload);
-    try {
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
-      if (res.ok) return true;
-    } catch (e) { console.error(e); }
-    return false;
+  // State cho chỉ số cơ thể
+  const [height, setHeight] = useState("170");
+  const [weight, setWeight] = useState("65");
+  const [goal, setGoal] = useState("tang_co"); 
+
+  // --- TÍNH BMI TỰ ĐỘNG ---
+  const bmiInfo = useMemo(() => {
+    const h = parseFloat(height) / 100;
+    const w = parseFloat(weight);
+    if (!h || !w) return { value: 0, status: "Chưa xác định", color: "text-gray-400" };
+    
+    const bmi = w / (h * h);
+    let status = "";
+    let color = "";
+    let advice = "";
+
+    if (bmi < 18.5) { 
+        status = "Thiếu cân"; color = "text-yellow-400"; advice = "Cần tăng cân";
+    } else if (bmi < 24.9) { 
+        status = "Bình thường"; color = "text-green-400"; advice = "Giữ dáng";
+    } else if (bmi < 29.9) { 
+        status = "Thừa cân"; color = "text-orange-400"; advice = "Cần giảm cân";
+    } else { 
+        status = "Béo phì"; color = "text-red-500"; advice = "Cần giảm cân gấp";
+    }
+
+    return { value: bmi.toFixed(1), status, color, advice };
+  }, [height, weight]);
+
+  // --- LOGIC UPLOAD ẢNH ---
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+        const file = e.target.files[0];
+        setSelectedFile(file);
+        setPreviewUrl(URL.createObjectURL(file));
+        setFoodName("");
+    }
   };
 
-  const pollForResults = () => {
+  const uploadFile = async (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+        await fetch("/api/upload", { method: "POST", body: formData });
+    } catch (e) { console.error("Upload error", e); }
+  };
+
+  // --- LOGIC GỬI TEXT ---
+  const saveText = async (text: string) => {
+    try {
+      await fetch("/api/save-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+    } catch (e) { console.error("Text save error", e); }
+  };
+
+  // --- MỚI: LOGIC GỬI THÔNG TIN USER (CHIỀU CAO, CÂN NẶNG) ---
+  const saveUserInfo = async () => {
+    let goalText = "Duy trì sức khỏe";
+    if (goal === "tang_co") goalText = "Tăng cơ bắp (Muscle Building)";
+    else if (goal === "giam_can") goalText = "Giảm mỡ (Fat Loss) - Ưu tiên thâm hụt Calo";
+    else if (goal === "giu_dang") goalText = "Giữ dáng (Maintain Weight)";
+
+    const userInfoString = `
+      - Chiều cao: ${height} cm
+      - Cân nặng: ${weight} kg
+      - Chỉ số BMI: ${bmiInfo.value} (${bmiInfo.status})
+      - Mục tiêu: ${goalText}
+    `;
+
+    try {
+      await fetch("/api/save-info", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ info: userInfoString }),
+      });
+      console.log("Đã gửi thông tin User xuống Backend!");
+    } catch (e) { console.error("Lỗi lưu info:", e); }
+  };
+
+  // --- LOGIC POLLING ---
+  const pollResult = () => {
     setIsAnalyzing(true);
-    const startTime = Date.now();
+    setStatus("🔄 Backend AI đang phân tích dữ liệu...");
+    
+    const clickTime = Date.now() / 1000;
+
     const interval = setInterval(async () => {
-      try {
-        const res = await fetch('/ai_result.json?t=' + Date.now());
-        const data = await res.json();
-        if (data.status === "success" && data.text && (Date.now() / 1000 - data.timestamp) < 30) {
-          setAiResult(data.text);
-          setStatus("✅ AI Đã Xử Lý Xong!");
-          setIsAnalyzing(false);
-          clearInterval(interval);
+        try {
+            const res = await fetch(`/ai_result.json?t=${Date.now()}&r=${Math.random()}`);
+            
+            if (res.ok) {
+                const data = await res.json();
+                
+                if (data.timestamp && data.timestamp > (clickTime - 5)) {
+                    setAiResult(data.text);
+                    setStatus("✅ Xử lý thành công!");
+                    setIsAnalyzing(false);
+                    clearInterval(interval);
+                }
+            }
+        } catch (e) { 
+            console.log("Đang đợi file mới..."); 
         }
-      } catch (e) {}
-      if (Date.now() - startTime > 90000) { 
-        clearInterval(interval);
-        setIsAnalyzing(false);
-        setStatus("⚠️ Hết thời gian chờ server.");
-      }
-    }, 2000);
+    }, 1000); 
   };
 
   const handlePayment = async (serviceType: number) => {
     if (!account) return;
     
+    // --- DỊCH VỤ 1: SCAN ẢNH/TEXT ---
     if (serviceType === 1) {
-      if (!selectedFile) {
-        alert("📸 Vui lòng chọn ảnh món ăn trước!");
-        return;
-      }
-      setStatus("📤 Đang upload ảnh vệ tinh...");
-      const success = await uploadFileToServer(selectedFile);
-      if (!success) return setStatus("❌ Lỗi đường truyền ảnh.");
+        if (!selectedFile && !foodName.trim()) {
+            return alert("Vui lòng chọn ảnh HOẶC nhập tên món ăn!");
+        }
+        
+        if (selectedFile) {
+            setStatus("📤 Đang gửi ảnh lên Server...");
+            await uploadFile(selectedFile);
+        } else if (foodName.trim()) {
+            setStatus("📝 Đang gửi tên món ăn...");
+            await saveText(foodName);
+        }
     }
 
+    // --- DỊCH VỤ 2: LÊN MENU (MỚI CẬP NHẬT) ---
     if (serviceType === 2) {
-      if (!height || !weight) {
-        alert("📝 Vui lòng nhập số đo cơ thể!");
-        return;
-      }
-      setStatus("📡 Đang mã hóa hồ sơ sức khỏe...");
-      const infoData = JSON.stringify({ height, weight, goal });
-      const blob = new Blob([infoData], { type: "application/json" });
-      const infoFile = new File([blob], "user_info.json"); 
-      const success = await uploadFileToServer(infoFile);
-      if (!success) return setStatus("❌ Lỗi gửi hồ sơ.");
+        setStatus("📝 Đang cập nhật chỉ số cơ thể...");
+        await saveUserInfo(); // <--- QUAN TRỌNG: Gửi thông tin trước khi thanh toán
     }
 
-    setAiResult(null); 
-    setStatus("💎 Đang xác thực trên Blockchain...");
-
+    setStatus("💎 Đang thanh toán qua ví Sui...");
     const tx = new Transaction();
-    const [coin] = tx.splitCoins(tx.gas, [10000000]); 
+    const [coin] = tx.splitCoins(tx.gas, [10000000]); // 0.01 SUI
 
     tx.moveCall({
       target: `${PACKAGE_ID}::${MODULE_NAME}::${FUNCTION_NAME}`,
@@ -121,175 +197,223 @@ function MainInterface() {
       { transaction: tx },
       {
         onSuccess: (result) => {
-          console.log("Tx Digest:", result.digest);
-          if (serviceType === 1) setStatus("🤖 AI đang quét dữ liệu món ăn...");
-          else setStatus("🧬 AI đang tổng hợp phác đồ dinh dưỡng...");
-          pollForResults();
+          console.log("Digest:", result.digest);
+          setAiResult(null); 
+          pollResult(); 
         },
-        onError: (err) => setStatus("❌ Giao dịch thất bại: " + err.message),
+        onError: (err) => setStatus("❌ Lỗi: " + err.message),
       },
     );
   };
 
   return (
-    // 🌌 BACKGROUND: Gradient tím than đậm chất vũ trụ
-    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-purple-950 to-black text-white flex flex-col items-center p-4 font-sans">
+    // 🌌 BACKGROUND
+    <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col items-center p-6 font-sans selection:bg-blue-500 selection:text-white">
       
       {/* 🌟 HEADER */}
-      <div className="w-full max-w-6xl flex justify-between items-center py-6 mb-10 border-b border-white/10">
+      <nav className="w-full max-w-7xl flex justify-between items-center py-6 mb-12 border-b border-white/10">
          <div className="flex items-center gap-3">
-            <span className="text-4xl">🥗</span>
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-2xl shadow-lg shadow-blue-500/30">
+                🧬
+            </div>
             <div>
-                <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-400">Sui-Nutrition AI</h1>
-                <p className="text-xs text-blue-200 tracking-widest uppercase">Decentralized Health Intelligence</p>
+                <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-400">
+                    Sui-Nutrition AI
+                </h1>
+                <p className="text-[10px] text-gray-400 tracking-[0.2em] uppercase font-semibold">Core Engine v2.0</p>
             </div>
          </div>
-         <div className="scale-110"><ConnectButton /></div>
-      </div>
+         <div className="hover:scale-105 transition-transform"><ConnectButton /></div>
+      </nav>
 
       {!account ? (
-        <div className="flex flex-col items-center justify-center h-96 text-center animate-fade-in-up">
-            <div className="text-6xl mb-6">🔒</div>
-            <h2 className="text-3xl font-bold text-white mb-4">Kết nối Ví để bắt đầu</h2>
-            <p className="text-gray-400 max-w-md">Sử dụng công nghệ Blockchain và AI để phân tích dinh dưỡng chuẩn xác nhất.</p>
+        <div className="flex flex-col items-center justify-center h-[60vh] text-center space-y-6">
+            <div className="text-8xl animate-bounce">🔒</div>
+            <h2 className="text-4xl font-bold text-white">Kết nối Ví để truy cập hệ thống</h2>
+            <p className="text-gray-400 max-w-md text-lg">Phân tích dinh dưỡng chuẩn xác bằng AI kết hợp bảo mật Blockchain.</p>
         </div>
       ) : (
-        <div className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div className="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-12 gap-8">
           
-          {/* 👈 CỘT TRÁI: DỊCH VỤ (Chiếm 4 phần) */}
+          {/* 👈 CỘT TRÁI: ĐIỀU KHIỂN */}
           <div className="lg:col-span-4 flex flex-col gap-6">
             
             {/* CARD 1: FOOD SCANNER */}
-            <div className="group relative bg-white/5 backdrop-blur-xl border border-white/10 p-6 rounded-2xl hover:border-blue-500/50 transition-all duration-300 shadow-lg hover:shadow-blue-500/20">
-              <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-100 transition text-4xl">📸</div>
-              <h2 className="text-xl font-bold text-blue-300 mb-2 flex items-center gap-2">
-                AI Food Scanner
-              </h2>
-              <p className="text-gray-400 text-sm mb-4">Upload ảnh để tính Calories & Macro siêu tốc.</p>
-              
-              <div className="relative mb-4">
-                  <input 
-                    type="file" accept="image/*"
-                    onChange={(e) => { if (e.target.files) setSelectedFile(e.target.files[0]); }}
-                    className="block w-full text-sm text-slate-300
-                      file:mr-4 file:py-2 file:px-4
-                      file:rounded-full file:border-0
-                      file:text-xs file:font-semibold
-                      file:bg-blue-600 file:text-white
-                      hover:file:bg-blue-500 cursor-pointer bg-black/20 rounded-lg p-2 border border-white/5"
-                  />
+            <div className="bg-[#111] border border-white/10 p-6 rounded-3xl shadow-xl hover:border-blue-500/30 transition-all group">
+              <div className="flex items-center gap-3 mb-4">
+                  <span className="p-2 bg-blue-500/10 rounded-lg text-2xl group-hover:scale-110 transition">📸</span>
+                  <h3 className="text-xl font-bold text-gray-200">AI Food Scanner</h3>
               </div>
               
-              <div className="flex justify-between items-center mt-4">
-                  <span className="text-yellow-400 font-mono text-sm">💰 0.01 SUI</span>
-                  <button 
-                    onClick={() => handlePayment(1)} disabled={isAnalyzing}
-                    className="px-6 py-2 bg-gradient-to-r from-blue-600 to-cyan-600 rounded-full font-bold shadow-lg shadow-blue-900/50 hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isAnalyzing ? "Processing..." : "SCAN NGAY"}
-                  </button>
+              {/* Preview Ảnh */}
+              <div className="relative w-full h-48 bg-black/50 rounded-xl border-2 border-dashed border-gray-700 flex flex-col items-center justify-center overflow-hidden mb-4 group-hover:border-blue-500/50 transition">
+                  {previewUrl ? (
+                      <>
+                        <img src={previewUrl} className="w-full h-full object-cover" alt="Preview" />
+                        <button 
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                setSelectedFile(null);
+                                setPreviewUrl(null);
+                            }}
+                            className="absolute top-2 right-2 bg-red-600 text-white p-1 rounded-full text-xs shadow-md z-10 hover:bg-red-500"
+                        >
+                            ✕
+                        </button>
+                      </>
+                  ) : (
+                      <div className="text-gray-500 text-sm flex flex-col items-center">
+                          <span className="text-2xl mb-2">☁️</span>
+                          <span>Chưa chọn ảnh</span>
+                      </div>
+                  )}
+                  <input type="file" accept="image/*" onChange={handleFileSelect} className="absolute inset-0 opacity-0 cursor-pointer" />
               </div>
-            </div>
 
-            {/* CARD 2: DIET PLAN */}
-            <div className="group relative bg-white/5 backdrop-blur-xl border border-white/10 p-6 rounded-2xl hover:border-green-500/50 transition-all duration-300 shadow-lg hover:shadow-green-500/20">
-               <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-100 transition text-4xl">📅</div>
-              <h2 className="text-xl font-bold text-green-300 mb-2">Diet Plan NFT</h2>
-              <p className="text-gray-400 text-sm mb-4">Lên thực đơn cá nhân hóa 7 ngày.</p>
-              
-              <div className="space-y-3 mb-4">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-gray-500 uppercase font-bold">Chiều cao</label>
-                    <div className="relative">
-                        <input type="number" placeholder="170" value={height} onChange={(e)=>setHeight(e.target.value)} 
-                            className="w-full bg-black/30 border border-white/10 rounded-lg p-2 text-white focus:outline-none focus:border-green-500 transition text-sm text-center" />
-                        <span className="absolute right-3 top-2 text-xs text-gray-500">cm</span>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-500 uppercase font-bold">Cân nặng</label>
-                    <div className="relative">
-                        <input type="number" placeholder="65" value={weight} onChange={(e)=>setWeight(e.target.value)} 
-                            className="w-full bg-black/30 border border-white/10 rounded-lg p-2 text-white focus:outline-none focus:border-green-500 transition text-sm text-center" />
-                        <span className="absolute right-3 top-2 text-xs text-gray-500">kg</span>
-                    </div>
-                  </div>
+              {/* Ô NHẬP TEXT */}
+              <div className="mb-4 w-full">
+                <div className="flex items-center gap-2 mb-2">
+                    <div className="h-px bg-gray-800 flex-1"></div>
+                    <span className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Hoặc nhập tên</span>
+                    <div className="h-px bg-gray-800 flex-1"></div>
                 </div>
                 
-                <div>
-                   <label className="text-xs text-gray-500 uppercase font-bold">Mục tiêu</label>
-                   <select value={goal} onChange={(e)=>setGoal(e.target.value)} 
-                        className="w-full bg-black/30 border border-white/10 rounded-lg p-2 text-white text-sm focus:outline-none focus:border-green-500 transition">
-                      <option value="giam_can">🔥 Giảm cân (Lose Weight)</option>
-                      <option value="tang_can">💪 Tăng cơ (Gain Muscle)</option>
-                      <option value="giu_can">🧘 Giữ dáng (Maintain)</option>
-                   </select>
-                </div>
+                <input
+                    type="text"
+                    value={foodName}
+                    onChange={(e) => setFoodName(e.target.value)}
+                    placeholder="Ví dụ: Bún bò huế, Cơm tấm..."
+                    disabled={!!selectedFile} 
+                    className={`w-full bg-black/40 border ${selectedFile ? 'border-gray-800 text-gray-600 cursor-not-allowed' : 'border-gray-600 text-white focus:border-blue-500'} rounded-xl px-4 py-3 outline-none transition-all placeholder-gray-600 text-sm font-medium`}
+                />
+                {selectedFile && (
+                    <p className="text-[10px] text-yellow-500/80 mt-1 ml-1 font-mono">* Đã chọn ảnh (Ưu tiên xử lý ảnh)</p>
+                )}
               </div>
 
-              <div className="flex justify-between items-center mt-4">
-                  <span className="text-yellow-400 font-mono text-sm">💰 0.01 SUI</span>
-                  <button 
-                    onClick={() => handlePayment(2)} disabled={isAnalyzing}
-                    className="px-6 py-2 bg-gradient-to-r from-green-600 to-emerald-600 rounded-full font-bold shadow-lg shadow-green-900/50 hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isAnalyzing ? "Writing..." : "MUA MENU"}
-                  </button>
-              </div>
+              <button 
+                onClick={() => handlePayment(1)} 
+                disabled={isAnalyzing}
+                className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl font-bold text-white shadow-lg shadow-blue-900/40 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {isAnalyzing ? "⏳ Đang quét..." : "⚡ SCAN (0.01 SUI)"}
+              </button>
             </div>
 
+            {/* CARD 2: DIET PLANNER + BMI */}
+            <div className="bg-[#111] border border-white/10 p-6 rounded-3xl shadow-xl hover:border-green-500/30 transition-all group">
+               <div className="flex items-center gap-3 mb-4">
+                  <span className="p-2 bg-green-500/10 rounded-lg text-2xl group-hover:scale-110 transition">🥗</span>
+                  <h3 className="text-xl font-bold text-gray-200">Smart Diet & BMI</h3>
+              </div>
+
+              {/* Input Chiều cao / Cân nặng */}
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div className="bg-black/30 p-3 rounded-xl border border-white/5">
+                      <label className="text-xs text-gray-500 font-bold uppercase block mb-1">Chiều cao</label>
+                      <div className="flex items-end gap-1">
+                          <input type="number" value={height} onChange={e=>setHeight(e.target.value)} className="w-full bg-transparent text-xl font-bold focus:outline-none text-white border-b border-gray-700 focus:border-green-500 transition" />
+                          <span className="text-xs text-gray-500 mb-1">cm</span>
+                      </div>
+                  </div>
+                  <div className="bg-black/30 p-3 rounded-xl border border-white/5">
+                      <label className="text-xs text-gray-500 font-bold uppercase block mb-1">Cân nặng</label>
+                      <div className="flex items-end gap-1">
+                          <input type="number" value={weight} onChange={e=>setWeight(e.target.value)} className="w-full bg-transparent text-xl font-bold focus:outline-none text-white border-b border-gray-700 focus:border-green-500 transition" />
+                          <span className="text-xs text-gray-500 mb-1">kg</span>
+                      </div>
+                  </div>
+              </div>
+
+              {/* Màn hình hiển thị BMI */}
+              <div className="mb-4 p-4 bg-white/5 rounded-xl flex items-center justify-between border border-white/5">
+                  <div>
+                      <div className="text-xs text-gray-400 uppercase">Chỉ số BMI</div>
+                      <div className={`text-2xl font-black ${bmiInfo.color}`}>{bmiInfo.value}</div>
+                  </div>
+                  <div className="text-right">
+                      <div className={`text-sm font-bold ${bmiInfo.color}`}>{bmiInfo.status}</div>
+                      <div className="text-xs text-gray-500">Mục tiêu: {bmiInfo.advice}</div>
+                  </div>
+              </div>
+
+              {/* Chọn Mục tiêu */}
+              <div className="mb-4">
+                  <label className="text-xs text-gray-500 font-bold uppercase block mb-2">Mục tiêu tuần này</label>
+                  <select value={goal} onChange={e=>setGoal(e.target.value)} className="w-full bg-black/30 border border-gray-700 text-gray-200 text-sm rounded-lg focus:ring-green-500 focus:border-green-500 block p-2.5">
+                    <option value="tang_co">💪 Tăng cơ bắp (Muscle)</option>
+                    <option value="giam_can">🔥 Giảm mỡ (Fat Loss)</option>
+                    <option value="giu_dang">🧘 Duy trì (Maintain)</option>
+                  </select>
+              </div>
+
+              <button 
+                onClick={() => handlePayment(2)} 
+                disabled={isAnalyzing}
+                className="w-full py-3 bg-gradient-to-r from-emerald-600 to-green-600 rounded-xl font-bold text-white shadow-lg shadow-green-900/40 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {isAnalyzing ? "⏳ Đang tính toán..." : "📅 LÊN MENU (0.01 SUI)"}
+              </button>
+            </div>
           </div>
 
-          {/* 👉 CỘT PHẢI: KẾT QUẢ AI (Chiếm 8 phần) */}
-          <div className="lg:col-span-8 flex flex-col gap-4 h-full">
-             
-             {/* THANH TRẠNG THÁI */}
+          {/* 👉 CỘT PHẢI: KẾT QUẢ HIỂN THỊ */}
+          <div className="lg:col-span-8 flex flex-col gap-4">
+              
+             {/* Status Bar */}
              {status && (
-                <div className={`w-full p-3 rounded-xl border flex items-center gap-3 animate-pulse
-                    ${status.includes("❌") ? "bg-red-900/20 border-red-500/50 text-red-300" 
-                    : status.includes("✅") ? "bg-green-900/20 border-green-500/50 text-green-300" 
-                    : "bg-blue-900/20 border-blue-500/50 text-blue-300"}`}>
-                    <span className="text-lg">{status.includes("✅") ? "🎉" : "🤖"}</span>
-                    <span className="font-mono text-sm">{status}</span>
+                <div className={`w-full p-4 rounded-xl border backdrop-blur-md flex items-center gap-3 animate-fade-in
+                    ${status.includes("❌") ? "bg-red-500/10 border-red-500/30 text-red-400" 
+                    : status.includes("✅") ? "bg-green-500/10 border-green-500/30 text-green-400" 
+                    : "bg-blue-500/10 border-blue-500/30 text-blue-400"}`}>
+                    <div className="w-2 h-2 rounded-full bg-current animate-pulse"></div>
+                    <span className="font-mono text-sm font-bold tracking-wide">{status}</span>
                 </div>
              )}
 
-             {/* MÀN HÌNH KẾT QUẢ */}
-             <div className="flex-1 bg-black/40 backdrop-blur-md rounded-3xl border border-white/10 p-8 shadow-2xl overflow-hidden relative min-h-[500px]">
-                {/* Trang trí nền */}
-                <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
-                <div className="absolute bottom-0 left-0 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2"></div>
+             {/* Result Container */}
+             <div className="flex-1 bg-[#111] rounded-3xl border border-white/10 p-8 shadow-2xl relative overflow-hidden min-h-[600px]">
+                {/* Background Decor */}
+                <div className="absolute top-0 right-0 w-[300px] h-[300px] bg-blue-600/10 rounded-full blur-[100px] pointer-events-none"></div>
+                <div className="absolute bottom-0 left-0 w-[300px] h-[300px] bg-purple-600/10 rounded-full blur-[100px] pointer-events-none"></div>
                 
                 {!aiResult ? (
-                    <div className="h-full flex flex-col items-center justify-center text-white/20">
-                        <div className="text-6xl mb-4 animate-bounce">🥗</div>
-                        <p className="uppercase tracking-widest text-sm">Chưa có dữ liệu phân tích</p>
-                        <p className="text-xs mt-2">Vui lòng chọn dịch vụ bên trái</p>
+                    <div className="h-full flex flex-col items-center justify-center text-gray-600 space-y-4">
+                        <div className="text-7xl opacity-20 animate-pulse grayscale">🥗</div>
+                        <div className="text-center">
+                            <h3 className="text-xl font-bold text-gray-500">Chờ dữ liệu phân tích...</h3>
+                            <p className="text-sm">Vui lòng Scan món ăn hoặc Mua thực đơn</p>
+                        </div>
                     </div>
                 ) : (
-                    <div className="relative z-10 animate-fade-in">
-                        <div className="flex items-center gap-3 mb-6 pb-4 border-b border-white/10">
-                            <div className="w-3 h-3 rounded-full bg-green-500 shadow-[0_0_10px_#22c55e]"></div>
-                            <h3 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-green-400 to-emerald-300 uppercase tracking-wide">
-                                Kết Quả Phân Tích
-                            </h3>
+                    <div className="relative z-10 animate-slide-up">
+                        <div className="flex items-center gap-3 mb-6 pb-4 border-b border-gray-800">
+                            <span className="text-2xl">✨</span>
+                            <h2 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-green-400 to-emerald-400">
+                                Báo Cáo Dinh Dưỡng
+                            </h2>
                         </div>
                         
-                        {/* Nội dung Markdown */}
-                        <div className="prose prose-invert prose-p:text-gray-300 prose-headings:text-blue-300 prose-strong:text-white max-w-none">
+                        {/* Markdown Content */}
+                        <div className="prose prose-invert prose-lg max-w-none 
+                            prose-headings:text-blue-300 prose-headings:font-bold 
+                            prose-p:text-gray-300 prose-p:leading-relaxed
+                            prose-strong:text-white prose-strong:font-extrabold
+                            prose-ul:list-disc prose-li:marker:text-blue-500">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>{aiResult}</ReactMarkdown>
                         </div>
 
-                        {/* Footer của Report */}
-                        <div className="mt-8 pt-4 border-t border-white/5 flex justify-between text-xs text-gray-500 font-mono">
-                            <span>Powered by Gemini 2.0 Flash</span>
-                            <span>{new Date().toLocaleString()}</span>
+                        <div className="mt-8 pt-4 border-t border-gray-800 flex justify-between items-center text-xs text-gray-500 font-mono">
+                            <div className="flex items-center gap-2">
+                                <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                                Verified by Gemini AI
+                            </div>
+                            <div>ID: {Date.now().toString().slice(-6)}</div>
                         </div>
                     </div>
                 )}
              </div>
-
           </div>
 
         </div>
