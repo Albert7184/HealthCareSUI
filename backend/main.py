@@ -11,7 +11,7 @@ load_dotenv()
 # ==========================================
 # 💎 CẤU HÌNH
 # ==========================================
-GOOGLE_API_KEY = "AIzaSyCCgcwzRritoQrV0Tbw9M3A6i2_wZdkpn8" 
+GOOGLE_API_KEY = "AIzaSyBUQsUMxXz20OaVffr8DM8hp3RmfgbSNBE" 
 genai.configure(api_key=GOOGLE_API_KEY)
 model = genai.GenerativeModel('gemini-flash-latest')
 
